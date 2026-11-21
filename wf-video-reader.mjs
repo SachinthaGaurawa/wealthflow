@@ -16,7 +16,8 @@
  * LIMITS, said in the issue itself: the sound is not heard, a moment between two frames is not seen, and a machine reading can be wrong.
  *
  * PRIVACY. The issue is PUBLIC. A recording of the app is described as it is (that is what the fix agent needs), exactly as a screenshot is.
- * A recording can also show another app: the reading is told to say only "another app" and not copy names, numbers or messages from it.
+ * A recording can also show another app: the reading is told to say only "another app" and not copy names, numbers or messages from it, and
+ * maskIdentifiers() then ENFORCES the part that matters most: e-mail addresses and long numbers never reach the issue, whatever a model wrote.
  * The frame readers and the story writer are never given a file name.
  *
  * Pure apart from the two functions it is given (describeImpl, chatImpl), so the tests run without a model. Never throws.
@@ -30,6 +31,19 @@ const WHY_WORDS = {
     first: 'the first moment', last: 'the last moment', change: 'the screen changed here', settled: 'the screen once it had settled',
     before: 'just before the screen changed', even: 'a moment between',
 };
+
+/**
+ * The issue is PUBLIC and a recording can show something that is not the app. The prompt asks the reader to say only "another app", but a prompt is a request,
+ * not a rule: whatever the readers wrote, this removes e-mail addresses and long numbers (cards, accounts, phones, references: eight digits or more, even when
+ * written in groups) before anything is kept. Amounts and words stay: the fix agent needs to see what the app showed. Idempotent, never throws.
+ */
+export function maskIdentifiers(text) {
+    try {
+        return String(text == null ? '' : text)
+            .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g, '[e-mail]')
+            .replace(/\+?\d(?:[ .-]?\d){7,}/g, '[number]');
+    } catch (_) { return ''; }
+}
 
 /** Only real raster data URLs, at most ten, in time order, with a time that is a plausible number and a reason from the fixed list. */
 export function validVideoFrames(list) {
@@ -161,7 +175,7 @@ export async function readVideo({ frames, motion = [], duration = 0, title = '',
     });
     const rows = list.map((f, i) => {
         const r = results[i] || {};
-        return { t: f.t, why: f.why, text: r.ok ? String(r.text || '').trim() : '', ok: !!r.ok, provider: r.provider, model: r.model };
+        return { t: f.t, why: f.why, text: r.ok ? maskIdentifiers(String(r.text || '').trim()) : '', ok: !!r.ok, provider: r.provider, model: r.model };
     });
     const readRows = rows.filter((r) => r.ok && r.text);
     const tried = [...new Set(results.flatMap((r) => (r && r.tried) || []))].slice(0, 4);
@@ -176,12 +190,12 @@ export async function readVideo({ frames, motion = [], duration = 0, title = '',
     if (left() < 5000) return out;
     try {
         const a = await withTimeout(chat({ prompt: storyPrompt({ title, text, rows, duration, motion }), system: STORY_SYSTEM, maxTokens: 800, temperature: 0.1, timeoutMs: Math.min(left(), 14_000), env }), Math.min(left(), 15_000), null);
-        const story = a && String(a.text || '').trim();
+        const story = a && maskIdentifiers(String(a.text || '').trim());
         if (!story) return out;
         out.story = story.slice(0, 2000); out.storyBy = String(a.provider || ''); out.checked = 'alone';
         if (left() < 4000) return out;
         const b = await withTimeout(chat({ prompt: checkPrompt({ story: out.story, rows }), system: STORY_SYSTEM, maxTokens: 400, temperature: 0, exclude: a.provider ? [a.provider] : [], timeoutMs: Math.min(left(), 10_000), env }), Math.min(left(), 11_000), null);
-        const answer = b && String(b.text || '').trim();
+        const answer = b && maskIdentifiers(String(b.text || '').trim());
         if (!answer) return out;
         out.checkedBy = String(b.provider || '');
         if (/^\W*confirmed\b/i.test(answer) && answer.length < 200) { out.checked = 'confirmed'; return out; }
