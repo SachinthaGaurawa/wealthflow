@@ -471,6 +471,26 @@ describe('the layout lane carries its own pull request to the end', () => {
             expect(lines.some((l) => /would rebuild the head/.test(l))).toBe(true);
             expect(x.st.calls.filter((c) => !c.startsWith('GET'))).toEqual([]);
         });
+        it('mergeable still null right after the default branch moved: asks again and merges once GitHub knows', async () => {
+            const x = fake({ files: [css()], mergeable: null });
+            let reads = 0;
+            const f = async (url, o) => {
+                if (String(url).endsWith('/pulls/662') && (!o || !o.method || o.method === 'GET')) {
+                    reads++;
+                    if (reads >= 3) { const r = await x.fetchImpl(url, o); const b = JSON.parse(await r.text()); b.mergeable = true; return { ok: true, status: 200, text: async () => JSON.stringify(b) }; }
+                }
+                return x.fetchImpl(url, o);
+            };
+            const out = await run({ env, fetchImpl: f, log: () => {}, now: NOW, sleep: async () => {} });
+            expect(reads).toBeGreaterThanOrEqual(3);
+            expect(out.some((d) => d.action === 'merge')).toBe(true);
+        });
+        it('mergeable never decided: reports a wait the outer loop will look at again, merges nothing', async () => {
+            const x = fake({ files: [css()], mergeable: null });
+            const out = await run({ env, fetchImpl: x.fetchImpl, log: () => {}, now: NOW, sleep: async () => {} });
+            expect(out.some((d) => d.action === 'wait' && /still running/.test(d.reason))).toBe(true);
+            expect(x.st.calls).not.toContain('PUT /pulls/662/merge');
+        });
         it('a refusal from GitHub on the merge is logged and the pass goes on', async () => {
             const x = fake({ files: [css()], mergeStatus: 405 });
             const lines = [];
