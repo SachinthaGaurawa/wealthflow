@@ -421,7 +421,14 @@ export async function run({ env = process.env, fetchImpl = globalThis.fetch, log
             }
         }
         // Runs GitHub holds for the agent's bot login: approve them when (and only when) the diff is what the agent's lanes write.
-        if (env.WF_AUTO_APPROVE !== '0') {
+        if (env.WF_AUTO_APPROVE === '0') {
+            // Switched off by the repository variable. Say so: a silent skip left two PRs waiting with no line in the log saying why (2026-11-21).
+            const held = heldRuns(((await call(`/actions/runs?head_sha=${pr.head.sha}&per_page=100`).catch(() => null)) || {}).workflow_runs, pr.head.sha);
+            if (held.length) {
+                log(`#${pr.number}: ${held.length} held run(s) are NOT approved because the repository variable WF_AUTO_APPROVE is 0. Delete it (or set it to 1) under Settings > Secrets and variables > Actions > Variables and the next pass approves them.`);
+                done.push({ pr: pr.number, issue, action: 'wait', reason: 'held runs; approving is switched off by WF_AUTO_APPROVE=0', failed: [] });
+            }
+        } else {
             const held = heldRuns(((await call(`/actions/runs?head_sha=${pr.head.sha}&per_page=100`).catch(() => null)) || {}).workflow_runs, pr.head.sha);
             if (held.length) {
                 const files = await filesOf();

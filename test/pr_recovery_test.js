@@ -254,6 +254,14 @@ describe('approving the runs GitHub holds for the agent', () => {
         await run({ env, fetchImpl: b.fetchImpl, log: () => {}, now: NOW, dryRun: true });
         expect(b.calls.some((c) => c.includes('/approve'))).toBe(false);
     });
+    it('run(): with approving switched off by the variable, the log says which variable and what to do', async () => {
+        const { calls, fetchImpl } = fake({ files: [mod()], runs: held });
+        const lines = [];
+        const out = await run({ env: { ...env, WF_AUTO_APPROVE: '0' }, fetchImpl, log: (m) => lines.push(m), now: NOW });
+        expect(calls.some((c) => c.includes('/approve'))).toBe(false);
+        expect(lines.some((l) => /WF_AUTO_APPROVE is 0/.test(l) && /Variables/.test(l))).toBe(true);
+        expect(out.some((d) => d.action === 'wait' && /WF_AUTO_APPROVE=0/.test(d.reason))).toBe(true);
+    });
     it('run(): a refusal from GitHub is logged with where the setting is, and does not stop the pass', async () => {
         const { fetchImpl } = fake({ files: [mod()], runs: held });
         const refuse = async (url, o) => (String(url).includes('/approve') ? { ok: false, status: 403, text: async () => 'forbidden' } : fetchImpl(url, o));
