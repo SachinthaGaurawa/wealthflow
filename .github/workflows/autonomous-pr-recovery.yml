@@ -17,6 +17,8 @@ name: Autonomous PR recovery (free)
 # perf ceilings, and the layout lane's appended CSS blocks). Any other file keeps the run held for a person, because a PR's own workflows run
 # with the repo's secrets. `WF_AUTO_APPROVE=0` (repository variable) turns the approving off.
 #
+# The job also waits (up to 10 minutes) for the checks it just released: the agent's PRs are opened with the workflow token, so GitHub does not
+# wake `workflow_run` when their CI ends, and without waiting the merge would come only at the next hourly run.
 # Layout-lane pull requests (only appended, validated CSS in wf-agent-fixes.css) are also carried to the end here, because the agent's own PRs
 # cannot start `pull_request_target` workflows (GITHUB_TOKEN events), so auto-merge.yml never runs for them: the head is rebuilt as a real merge
 # of the default branch (two such PRs append at the same place, so one conflicts as soon as the other merges), the agent's bookkeeping file is
@@ -51,7 +53,7 @@ concurrency:
 jobs:
   recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@v2
