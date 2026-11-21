@@ -102,3 +102,9 @@
 /* lane-block: 658 scope=#page-ccinstall — [HIGH] Layout overlap on phones: CC Instalments */
 #page-ccinstall .wf-ctab-amt { white-space: normal;
   line-height: 1.4; }
+
+/* lane-block: 659 scope=#page-cconetime — [HIGH] Layout overlap on phones: CC one-time charges */
+#page-cconetime .wf-ctab { grid-template-columns: 1fr; }
+#page-cconetime .wf-ctab-name { grid-column: 1; }
+#page-cconetime .wf-ctab-meta { grid-column: 1; }
+#page-cconetime .wf-ctab-due { grid-column: 1; }
