@@ -98,3 +98,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 4px; }
+
+/* lane-block: 659 scope=#page-cconetime — [HIGH] Layout overlap on phones: CC one-time charges */
+#page-cconetime .wf-ctab { grid-template-columns: 1fr; }
+#page-cconetime .wf-ctab-name { grid-column: 1; }
+#page-cconetime .wf-ctab-meta { grid-column: 1; }
+#page-cconetime .wf-ctab-due { grid-column: 1; }
