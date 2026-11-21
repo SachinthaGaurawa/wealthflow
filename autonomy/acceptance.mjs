@@ -161,10 +161,12 @@ export function findingsBrief(findings) {
 
 /* ------------------------------------------------------------------ the prompts */
 
-export function testerPrompt({ issueText, api = '', surface = [], facts = '', code = '', found = null }) {
+export function testerPrompt({ issueText, api = '', surface = [], facts = '', code = '', found = null, edit = false }) {
     const rec = readRecipe(code);
     return [
-        'You are the TESTER. A new read-only module was just written for WealthFlow, a personal-finance PWA. You will NOT see the module run; write the script a person would follow on their PHONE to see for themselves whether the change does what the OWNER asked.',
+        edit
+            ? 'You are the TESTER. An existing screen of WealthFlow, a personal-finance PWA, was just EDITED (its text, markup and styling) to fix what the owner reported. You will NOT see it run; write the script a person would follow on their PHONE to see for themselves whether the edited screen now does what the OWNER asked.'
+            : 'You are the TESTER. A new read-only module was just written for WealthFlow, a personal-finance PWA. You will NOT see the module run; write the script a person would follow on their PHONE to see for themselves whether the change does what the OWNER asked.',
         '',
         "THE OWNER'S REPORT:", fenceUntrusted('report', issueText, 2400), '',
         ...(facts ? ['THE REAL CODE OF THE SCREEN THE REPORT IS ABOUT (use its ids, classes and function names exactly):', fenceUntrusted('screen code', facts, 3200), ''] : []),
@@ -339,7 +341,7 @@ export function evidenceText({ steps, hard = [], vision = '', viewport = PHONE, 
  * Run a change on a phone and judge it.
  * @param {object} o
  * @param {{title?:string, body?:string}} o.issue
- * @param {{name:string, api?:string, code:string}} o.module  the new (or revised) module, served from memory
+ * @param {{name:string, api?:string, code:string, overlay?:object}} o.module  the new (or revised) module, served from memory; with `overlay` ({file: text}) the page's own files are served changed instead (an edit, autonomy/edit-lane.mjs) and `code` is just the text the tester reads
  * @param {string} [o.facts]    the real code of the screen the report is about
  * @param {string[]} [o.surface] names the module exposes
  * @param {object} [o.deps]     { chat, boot, describe } for tests
@@ -355,7 +357,7 @@ export async function runAcceptance({ issue = {}, module: mod, facts = '', surfa
 
     // 1. the tester's script (asked again once if the first one tapped things that are not there)
     const askPlan = async (found = null) => {
-        const t = await ask({ system: 'You write precise, minimal browser test scripts for a phone UI. You output JSON only.', prompt: testerPrompt({ issueText, api: mod.api, surface, facts, code: mod.code, found }), prefer: ['reasoning', 'strongest'], maxTokens: 2200, temperature: 0.2, env }).catch((e) => ({ text: '', _error: e.message }));
+        const t = await ask({ system: 'You write precise, minimal browser test scripts for a phone UI. You output JSON only.', prompt: testerPrompt({ issueText, api: mod.api, surface, facts, code: mod.code, found, edit: Boolean(mod.overlay) }), prefer: ['reasoning', 'strongest'], maxTokens: 2200, temperature: 0.2, env }).catch((e) => ({ text: '', _error: e.message }));
         let json = null; try { json = t.text ? extractJson(t.text) : null; } catch (_) { json = null; }
         return { ...validatePlan(json), provider: t.provider };
     };
@@ -371,8 +373,9 @@ export async function runAcceptance({ issue = {}, module: mod, facts = '', surfa
     const run = async (p) => {
         const app = await boot({
             repoDir, mobile: true, viewport,
-            overlay: { [mod.name]: mod.code },
-            htmlTransform: (html) => (html.includes(`src="${mod.name}"`) ? html : html.includes(SCRIPT_ANCHOR) ? html.replace(SCRIPT_ANCHOR, `<script src="${mod.name}" defer></script>\n    ${SCRIPT_ANCHOR}`) : html.replace('</body>', `<script src="${mod.name}" defer></script></body>`)),
+            // a NEW module is served beside the page and put on it; an EDIT of the page itself (autonomy/edit-lane.mjs) serves the changed files as they are
+            overlay: mod.overlay || { [mod.name]: mod.code },
+            htmlTransform: mod.overlay ? undefined : (html) => (html.includes(`src="${mod.name}"`) ? html : html.includes(SCRIPT_ANCHOR) ? html.replace(SCRIPT_ANCHOR, `<script src="${mod.name}" defer></script>\n    ${SCRIPT_ANCHOR}`) : html.replace('</body>', `<script src="${mod.name}" defer></script></body>`)),
         });
         try {
             const note = app.page.locator('#wfPostUpdate');

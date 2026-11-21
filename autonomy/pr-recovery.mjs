@@ -23,6 +23,17 @@
  *              `approvalVerdict`: leaf browser modules, their `test/auto-*` proving test, the agent's own state file, one script line
  *              in index.html, numeric perf-budget ceilings). Anything else stays held for a person, because a pull request's own
  *              workflows and scripts run with the repository's secrets. `WF_AUTO_APPROVE=0` turns it off.
+ *   layout lane (added 2026-11-21, owner: "do not fix #660/#662 yourself, make the system do it") A layout fix is only ever an APPENDED, headed block of
+ *            validated CSS in `wf-agent-fixes.css` (autonomy/css-rules.mjs, the same strict reader the lane used before it opened the PR). Two things kept
+ *            such PRs waiting for a person for ever, and neither was a fault in the fix:
+ *              1. the approval allowlist above knew only the build lane's files, so the held CI runs were never approved;
+ *              2. the agent also committed its bookkeeping file `autonomy/state/issue-N.json`, and `autonomy/.*` is a sensitive path: the Risk gate
+ *                 wants `human-approved` for a counter. (The agent no longer stages it; PRs opened before that are repaired here.)
+ *            So for a PR whose every change is lane CSS (plus that bookkeeping file) this job (a) approves the held runs, (b) rebuilds the head as a real
+ *            merge of the default branch with exactly the PR's appended blocks (two layout PRs append at the same end of the file, so the second
+ *            always conflicts once the first merges) and leaves the bookkeeping file out, and (c) merges it itself when GitHub says it is clean and
+ *            the required checks (tests + fuzz, risk gate, conftest, the review board, secret scan) all PASSED on that exact commit. It never merges a
+ *            PR with any other file, a failing check, or a head that moved. `WF_AUTO_LANE=0` turns (b) and (c) off.
  *   Failures that are not code failures never count: the Risk gate waiting for `human-approved`, cancelled runs
  *   (a newer push superseded them), skipped jobs, and checks that only exist to comment or label.
  *
@@ -30,6 +41,7 @@
  * ===========================================================================*/
 
 import { forbiddenIn } from './build-lane.mjs';
+import { LANE_FILE, validateCss, validateLaneFile } from './css-rules.mjs';
 
 export const RECOVERY_MARKER = '<!-- wf-pr-recovery -->';
 
@@ -156,6 +168,34 @@ const STAMP_COMMENT = /^<!--\s*[^<>]*added by the build lane[^<>]*-->$/;
 /** Files whose content is only ever read as data by the board and the policy gate, or runs in the browser tests with no secrets. */
 export const AUTO_APPROVE_MAX_FILES = 8;
 
+const LANE_HEAD = /^\/\*\s*lane-block:\s*(\S+)\s+scope=(#[\w-]+)/;
+/** A layout fix is one screen: three headed blocks is already more than any lane run has produced. */
+export const LANE_MAX_BLOCKS = 3;
+
+/**
+ * What a layout-lane pull request does to `wf-agent-fixes.css`: ONLY append headed blocks, and every block passes the lane's own strict reader
+ * (selector names the one screen, layout properties only, nothing hidden, no url(), no breaking words into pieces). Pure.
+ * @param {string} patch the file's unified-diff patch from the pull request's file list
+ */
+export function laneCssVerdict(patch) {
+    const no = (why) => ({ ok: false, why });
+    const text = String(patch || '');
+    if (!text) return no('no patch to read');
+    if (text.split('\n').some((l) => l.startsWith('-') && !l.startsWith('---'))) return no('it removes or rewrites an existing line; the lane only appends');
+    const parts = addedLines(text).join('\n').split(/(?=\/\*\s*lane-block:)/);
+    const lead = LANE_HEAD.test(parts[0]) ? '' : parts.shift();
+    if (lead && lead.replace(/\/\*[\s\S]*?\*\//g, '').trim()) return no('CSS that is not inside a headed lane block');
+    if (!parts.length) return no('no headed lane block was added');
+    if (parts.length > LANE_MAX_BLOCKS) return no(`${parts.length} blocks added; a layout fix is at most ${LANE_MAX_BLOCKS}`);
+    for (const part of parts) {
+        const head = part.match(LANE_HEAD);
+        if (!head) return no('a block has no "lane-block: <issue> scope=#id" header');
+        const v = validateCss(part.replace(/^\/\*[\s\S]*?\*\//, ''), { scope: head[2] });
+        if (!v.ok) return no(`block ${head[1]}: ${v.problems.slice(0, 2).join('; ')}`);
+    }
+    return { ok: true, why: `${parts.length} appended block(s), all passing the layout lane's own reader` };
+}
+
 /**
  * May the held runs of this agent PR be approved without a person? Pure.
  * @param {{ pr:{ user?:{login?:string}, head:{ ref:string, repo?:{ full_name?:string } }, base?:{ repo?:{ full_name?:string } } }, files:{ filename:string, status?:string, patch?:string }[] }} input
@@ -188,6 +228,12 @@ export function approvalVerdict({ pr, files } = {}) {
             if (bad) return no(`${name}: a proving test ${bad[1]}`);
             continue;
         }
+        if (name === LANE_FILE) {
+            const miss = needPatch(); if (miss) return miss;
+            const lane = laneCssVerdict(patch);
+            if (!lane.ok) return no(`${name}: ${lane.why}`);
+            continue;
+        }
         if (STATE_FILE.test(name)) {
             const miss = needPatch(); if (miss) return miss;
             const bad = changedLines(patch).find((l) => l && !STATE_LINE.test(l));
@@ -218,6 +264,81 @@ export function heldRuns(runs, sha) {
 }
 
 // ----------------------------------------------------------------------------------------------------------------
+// The layout lane: repair a PR whose only real change is appended CSS, and merge it when everything that must pass has passed
+// ----------------------------------------------------------------------------------------------------------------
+/** Checks that must have PASSED on the exact head before this job merges anything. Names are the jobs' own (see a merged PR's check list). */
+export const REQUIRED_CHECKS = [/^Tests \+ fuzz/i, /^Risk gate/i, /^conftest$/i, /^review$/i, /^No committed credentials/i];
+const RED = new Set(['failure', 'timed_out', 'action_required', 'startup_failure']);
+const IGNORED_CHECK = /^(watch|enable auto-merge|point the preview branch|decide whether this change is auto-safe|vercel)/i;
+
+/** Is this PR a layout-lane PR that can be rebuilt, and what must be left out / carried over? Pure. */
+export function repairPlan({ pr, files } = {}) {
+    const verdict = approvalVerdict({ pr, files });
+    if (!verdict.ok) return { ok: false, why: verdict.why };
+    const lane = (files || []).find((f) => f.filename === LANE_FILE);
+    if (!lane) return { ok: false, why: 'not a layout-lane pull request (it does not change wf-agent-fixes.css)' };
+    const others = (files || []).filter((f) => f.filename !== LANE_FILE);
+    const odd = others.find((f) => !STATE_FILE.test(f.filename));
+    if (odd) return { ok: false, why: `${odd.filename} is more than the layout lane's bookkeeping` };
+    return { ok: true, why: verdict.why, strip: others.map((f) => f.filename), addedCss: addedLines(lane.patch).join('\n') };
+}
+
+/** The blocks of a lane file, header included, in order. */
+function laneBlocks(css) { return String(css || '').split(/(?=\/\*\s*lane-block:)/).filter((b) => LANE_HEAD.test(b)).map((b) => b.replace(/\s+$/, '')); }
+
+/**
+ * The default branch's lane file with this PR's appended blocks added at its end (a block that is already there is not added twice).
+ * Checked as a whole by the lane's own file validator, so what is committed is what CI's agent_fixes_css test accepts. Pure.
+ */
+export function mergeLaneCss(mainCss, addedCss) {
+    const base = String(mainCss || '').replace(/\s+$/, '');
+    const fresh = laneBlocks(addedCss).filter((b) => !base.includes(b.trim()));
+    if (!fresh.length) return { ok: false, why: 'the default branch already carries every block of this pull request', css: String(mainCss || ''), added: 0 };
+    const css = `${base}\n\n${fresh.join('\n\n')}\n`;
+    const v = validateLaneFile(css);
+    return v.ok ? { ok: true, why: `${fresh.length} block(s) added`, css, added: fresh.length } : { ok: false, why: `the merged file would not pass: ${v.problems[0]}`, css, added: 0 };
+}
+
+/** One result per job (check name + the workflow run it belongs to): a re-run replaces its own earlier attempt, a same-named job of another workflow does not. */
+function latestPerJob(checkRuns) {
+    const by = new Map();
+    for (const c of checkRuns || []) {
+        const name = String((c && c.name) || '');
+        if (!name) continue;
+        const key = `${name}#${runIdOf(c) || c.id}`;
+        const t = Date.parse(c.completed_at || c.started_at || '') || 0;
+        const prev = by.get(key);
+        if (!prev || t >= prev.t) by.set(key, { t, c });
+    }
+    return [...by.values()].map((v) => v.c);
+}
+
+/**
+ * May this layout-lane PR be merged by this job? Every condition must hold, on the head commit the checks were read for. Pure.
+ * @param {{ pr:object, files:object[], checkRuns:object[], mergeable:boolean|null|undefined }} input
+ */
+export function mergeVerdict({ pr, files, checkRuns, mergeable } = {}) {
+    const no = (why) => ({ ok: false, why });
+    const v = approvalVerdict({ pr, files });
+    if (!v.ok) return no(v.why);
+    if (!Array.isArray(files) || !files.length || files.some((f) => f.filename !== LANE_FILE)) return no('only a pull request that changes nothing but wf-agent-fixes.css merges by itself');
+    if (pr.draft) return no('it is still a draft');
+    if (mergeable !== true) return no(mergeable === false ? 'it conflicts with the default branch' : 'GitHub has not yet worked out whether it merges cleanly');
+    const jobs = latestPerJob(checkRuns);
+    if (jobs.some((c) => c.status && c.status !== 'completed')) return no('checks are still running');
+    for (const re of REQUIRED_CHECKS) {
+        const named = jobs.filter((c) => re.test(c.name));
+        if (!named.length) return no(`the check "${re.source.replace(/[\\^$]/g, '')}" has not reported on this commit`);
+        const red = named.find((c) => RED.has(c.conclusion));
+        if (red) return no(`${red.name} did not pass (${red.conclusion})`);
+        if (!named.some((c) => c.conclusion === 'success')) return no(`${named[0].name} has not passed (${named[0].conclusion})`);
+    }
+    const red = jobs.find((c) => !IGNORED_CHECK.test(c.name) && RED.has(c.conclusion));
+    if (red) return no(`${red.name} did not pass (${red.conclusion})`);
+    return { ok: true, why: `appended layout CSS only; ${jobs.length} check(s) read, the required ones passed on this commit` };
+}
+
+// ----------------------------------------------------------------------------------------------------------------
 // The runner (network). Reads the API as data; never checks out or runs a pull request's code.
 // ----------------------------------------------------------------------------------------------------------------
 async function api(path, { method = 'GET', body, env = process.env, fetchImpl = globalThis.fetch } = {}) {
@@ -235,19 +356,75 @@ async function api(path, { method = 'GET', body, env = process.env, fetchImpl = 
     try { return JSON.parse(text); } catch { return null; }
 }
 
+/**
+ * Rebuild a layout PR's head as a real merge: parents are the PR's current head and the default branch's tip, the tree is the default
+ * branch's tree with `wf-agent-fixes.css` holding exactly this PR's appended blocks. The PR then merges cleanly, and the bookkeeping file
+ * (a sensitive path) is no longer in its diff. A fast-forward update of the branch only (never forced), and only if the head is still the one read.
+ * @returns the new head sha, or null when nothing was done
+ */
+async function repairLanePr({ call, pr, plan, issue, env, log }) {
+    try {
+        const base = env.WF_DEFAULT_BRANCH || 'main';
+        const mainSha = ((await call(`/git/ref/heads/${base}`)) || {}).object?.sha;
+        const mainTree = mainSha ? ((await call(`/git/commits/${mainSha}`)) || {}).tree?.sha : null;
+        const file = mainSha ? await call(`/contents/${LANE_FILE}?ref=${mainSha}`) : null;
+        if (!mainSha || !mainTree || !file || typeof file.content !== 'string') { log(`#${pr.number}: could not read ${base}; nothing rebuilt`); return null; }
+        const merged = mergeLaneCss(Buffer.from(file.content, 'base64').toString('utf8'), plan.addedCss);
+        if (!merged.ok) { log(`#${pr.number}: not rebuilt — ${merged.why}`); return null; }
+        if ((((await call(`/pulls/${pr.number}`)) || {}).head || {}).sha !== pr.head.sha) { log(`#${pr.number}: the branch moved; nothing rebuilt, the next pass reads it again`); return null; }
+        const blob = await call('/git/blobs', { method: 'POST', body: { content: merged.css, encoding: 'utf-8' } });
+        const tree = await call('/git/trees', { method: 'POST', body: { base_tree: mainTree, tree: [{ path: LANE_FILE, mode: '100644', type: 'blob', sha: blob.sha }] } });
+        const commit = await call('/git/commits', { method: 'POST', body: {
+            message: `Layout fix for #${issue}: ${base} merged in${plan.strip.length ? ', bookkeeping file left out' : ''}\n\nDone by the recovery job (autonomy/pr-recovery.mjs). The diff against ${base} is the appended layout CSS and nothing else.`,
+            tree: tree.sha, parents: [pr.head.sha, mainSha],
+        } });
+        await call(`/git/refs/heads/${pr.head.ref}`, { method: 'PATCH', body: { sha: commit.sha, force: false } });
+        return commit.sha;
+    } catch (e) {
+        log(`#${pr.number}: could not rebuild the head (${e.message}); it stays as it is for a person`);
+        return null;
+    }
+}
+
 /** One pass over every open agent PR. Returns what it did, for the log and the tests. */
-export async function run({ env = process.env, fetchImpl = globalThis.fetch, log = console.log, now = Date.now(), dryRun = false } = {}) {
+export async function run({ env = process.env, fetchImpl = globalThis.fetch, log = console.log, now = Date.now(), dryRun = false, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
     const call = (p, o = {}) => api(p, { env, fetchImpl, ...o });
     const prs = (await call('/pulls?state=open&per_page=100')) || [];
     const done = [];
     for (const pr of prs) {
         const issue = issueOfBranch(pr.head && pr.head.ref);
         if (issue === null) continue;
-        // Runs GitHub holds for the agent's bot login: approve them when (and only when) the diff is what the build lane writes.
+        let filesMemo = null;
+        const listFiles = async () => { const r = await call(`/pulls/${pr.number}/files?per_page=100`).catch(() => null); return Array.isArray(r) ? r : []; };
+        const filesOf = async () => (filesMemo ??= await listFiles());
+        // The layout lane: rebuild a PR whose only real change is appended CSS (conflict with main, bookkeeping file) so it can go through by itself.
+        if (env.WF_AUTO_LANE !== '0') {
+            const files = await filesOf();
+            if (files.some((f) => f.filename === LANE_FILE)) {
+                const plan = repairPlan({ pr, files });
+                const full = (await call(`/pulls/${pr.number}`).catch(() => null)) || {};
+                if (!plan.ok) log(`#${pr.number}: layout PR left as it is — ${plan.why}`);
+                else if (plan.strip.length || full.mergeable === false) {
+                    const why = [full.mergeable === false && 'conflicts with main', plan.strip.length && 'carries the bookkeeping file'].filter(Boolean).join(' and ');
+                    if (dryRun) log(`#${pr.number}: would rebuild the head (${why})`);
+                    else {
+                        const sha = await repairLanePr({ call, pr, plan, issue, env, log });
+                        if (sha) {
+                            log(`#${pr.number}: head rebuilt as a merge of ${env.WF_DEFAULT_BRANCH || 'main'} plus its own CSS (${why}); new head ${sha.slice(0, 7)}`);
+                            done.push({ pr: pr.number, issue, action: 'repair', reason: why, failed: [] });
+                            pr.head = { ...pr.head, sha };
+                            filesMemo = null;
+                            await sleep(20000);   // let GitHub create the runs for the new head before the approval step below looks for them
+                        }
+                    }
+                }
+            }
+        }
+        // Runs GitHub holds for the agent's bot login: approve them when (and only when) the diff is what the agent's lanes write.
         if (env.WF_AUTO_APPROVE !== '0') {
             const held = heldRuns(((await call(`/actions/runs?head_sha=${pr.head.sha}&per_page=100`).catch(() => null)) || {}).workflow_runs, pr.head.sha);
             if (held.length) {
-                const files = (await call(`/pulls/${pr.number}/files?per_page=100`).catch(() => null)) || [];
+                const files = await filesOf();
                 const v = approvalVerdict({ pr, files });
                 if (!v.ok) log(`#${pr.number}: ${held.length} run(s) wait for a person — ${v.why}`);
                 else if (dryRun) log(`#${pr.number}: would approve ${held.length} held run(s) — ${v.why}`);
@@ -268,6 +445,24 @@ export async function run({ env = process.env, fetchImpl = globalThis.fetch, log
         const cr = await call(`/commits/${pr.head.sha}/check-runs?per_page=100`).catch((e) => { log(`#${pr.number}: could not read checks (${e.message})`); return null; });
         if (!cr) continue;
         const checkRuns = cr.check_runs || [];
+        // The layout lane merges itself once the required checks have passed on this exact commit (the merge call carries the commit it read).
+        if (env.WF_AUTO_LANE !== '0') {
+            const files = await filesOf();
+            if (files.length && files.every((f) => f.filename === LANE_FILE)) {
+                const full = (await call(`/pulls/${pr.number}`).catch(() => null)) || {};
+                const mv = full.head && full.head.sha === pr.head.sha ? mergeVerdict({ pr: { ...pr, draft: full.draft }, files, checkRuns, mergeable: full.mergeable }) : { ok: false, why: 'the branch moved while it was being checked' };
+                if (!mv.ok) log(`#${pr.number}: layout PR not merged yet — ${mv.why}`);
+                else if (dryRun) log(`#${pr.number}: would merge — ${mv.why}`);
+                else {
+                    try {
+                        await call(`/pulls/${pr.number}/merge`, { method: 'PUT', body: { merge_method: 'squash', sha: pr.head.sha, commit_title: `${String(pr.title || `layout fix for #${issue}`).slice(0, 200)} (#${pr.number})`, commit_message: `Merged by the recovery job: appended layout CSS only, required checks passed on ${pr.head.sha.slice(0, 7)}.` } });
+                        log(`#${pr.number}: merged — ${mv.why}`);
+                        done.push({ pr: pr.number, issue, action: 'merge', reason: mv.why, failed: [] });
+                        continue;
+                    } catch (e) { log(`#${pr.number}: GitHub refused the merge (${e.message}); it stays open and the next pass tries again`); }
+                }
+            }
+        }
         const runAttempts = {};
         for (const id of new Set(latestPerCheck(checkRuns).filter((c) => c.conclusion === 'failure' || c.conclusion === 'timed_out').map(runIdOf).filter(Boolean))) {
             const run = await call(`/actions/runs/${id}`).catch(() => null);
