@@ -424,9 +424,10 @@ export async function screenshotContext({ issue, env = process.env, fetchImpl, r
         let note = 'The screenshot was already read when the report was filed (see "What the AI saw in the screenshot").';
         // Several attachments were read, and only the first thumbnail is here to check against: checking the whole reading against
         // one picture would "correct" the others. The reading stands, and the note says it was not cross-checked.
-        const multi = Number((String(body).match(/<!--\s*wf-attachments:(\d+)\s*-->/) || [])[1] || 1) > 1;
+        // A screen recording counts the same way: its thumbnail is one contact sheet of the whole recording, and checking a frame-by-frame reading against that would "correct" it wrongly.
+        const multi = Number((String(body).match(/<!--\s*wf-attachments:(\d+)\s*-->/) || [])[1] || 1) > 1 || /<!--\s*wf-attachments-video\s*-->/.test(body);
         if (multi) {
-            note = 'The attachments were already read when the report was filed (see "What the AI saw in the screenshot"). There are several, so the reading was not cross-checked against the first thumbnail.';
+            note = 'The attachments were already read when the report was filed (see "What the AI saw in the screenshot"). There are several, so the reading was not cross-checked against the first thumbnail.' + (/<!--\s*wf-attachments-video\s*-->/.test(body) ? ' One is a screen recording: it was read frame by frame and its story already checked by a second model.' : '');
             return { body: stripped + ground(reading), status: 'read', provider: 'filing', note };
         }
         try {

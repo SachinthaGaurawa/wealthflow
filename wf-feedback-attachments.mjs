@@ -17,6 +17,8 @@
  * Pure apart from the reader it is given; the reader is injectable so the tests run without a model.
  * ===========================================================================*/
 
+import { validVideoFrames, cleanMotion, readVideo, videoBlock } from './wf-video-reader.mjs';
+
 import { scrubText } from './wealthflow-diag-scrub.js';
 
 // The reader pulls in the model router; it is loaded only when a picture is actually read, so a report without pictures (and the
@@ -39,13 +41,15 @@ export const MAX_THUMB_CHARS = 60_000;
 /** Marker for the thumbnails after the first, and for the number of attachments (the agent skips its single-picture cross-check when it is above one). */
 export const EXTRA_MARKER = 'wf-feedback-image-extra';
 export const COUNT_MARKER = 'wf-attachments';
+/** Present when one attachment is a screen recording: its thumbnail is a contact sheet, so the agent must not check the readings against it. */
+export const VIDEO_MARKER = 'wf-attachments-video';
 
 const THUMB_URL = /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
-const KINDS = new Set(['image', 'pdf', 'text']);
+const KINDS = new Set(['image', 'pdf', 'text', 'video']);
 
 /**
  * @param {object} body  the request body of /api/feedback-triage
- * @returns {{ n:number, kind:'image'|'pdf'|'text', thumb:string, reading:string[], text:string, pages:number, totalPages:number, truncated:boolean }[]}
+ * @returns {{ n:number, kind:'image'|'pdf'|'text'|'video', thumb:string, reading:string[], frames:{t:number,why:string,image:string}[], motion:number[][], duration:number, text:string, pages:number, totalPages:number, truncated:boolean }[]}
  */
 export function normalizeAttachments(body) {
     const b = body && typeof body === 'object' ? body : {};
@@ -71,10 +75,21 @@ export function normalizeAttachments(body) {
             }
             if (a.kind === 'pdf') reading = reading.slice(0, 2);
         }
+        // a screen recording: the frames the device chose (at most ten, each a real raster picture), what is left of the budget is theirs
+        let frames = [];
+        if (a.kind === 'video') {
+            for (const f of validVideoFrames(a.frames)) {
+                if (f.image.length > budget) break;
+                budget -= f.image.length; frames.push(f);
+            }
+        }
         const text = a.kind === 'text' && typeof a.text === 'string' ? a.text.slice(0, MAX_TEXT_CHARS) : '';
-        if (!thumb && !reading.length && !text.trim()) continue;
+        if (!thumb && !reading.length && !frames.length && !text.trim()) continue;
+        const dur = Number(a.duration);
         out.push({
-            n: out.length + 1, kind: a.kind, thumb, reading, text,
+            n: out.length + 1, kind: a.kind, thumb, reading, text, frames,
+            motion: a.kind === 'video' ? cleanMotion(a.motion) : [],
+            duration: a.kind === 'video' && Number.isFinite(dur) && dur > 0 && dur <= 3600 ? Math.round(dur * 10) / 10 : 0,
             pages: a.kind === 'pdf' ? Math.max(1, Math.min(2, Number(a.pages) || reading.length || 1)) : 0,
             totalPages: a.kind === 'pdf' ? Math.max(1, Math.min(9999, Number(a.totalPages) || 1)) : 0,
             truncated: !!a.truncated,
@@ -83,10 +98,17 @@ export function normalizeAttachments(body) {
     return out;
 }
 
-const KIND_WORD = { image: 'screenshot', pdf: 'PDF document', text: 'text file' };
+const KIND_WORD = { image: 'screenshot', pdf: 'PDF document', text: 'text file', video: 'screen recording' };
 
 /** `what each attachment shows` in words, with a deadline per attachment. Never throws. */
-async function readOne(att, total, { title, text, env, fetchImpl, describeImpl, deadlineMs, log }) {
+async function readOne(att, total, { title, text, env, fetchImpl, describeImpl, chatImpl, deadlineMs, log }) {
+    if (att.kind === 'video') {
+        if (!att.frames || !att.frames.length) return { att, status: 'none' };
+        try {
+            const v = await readVideo({ frames: att.frames, motion: att.motion, duration: att.duration, title, text: `[This is attachment ${att.n} of ${total} on one report, a screen recording. The other attachments are separate files.] ` + String(text || '').slice(0, 400), env, fetchImpl, describeImpl, chatImpl, deadlineMs: deadlineMs + 2000, log });
+            return { att, video: v, status: v.status === 'unreadable' ? 'unreadable' : 'read', who: v.who };
+        } catch (_) { return { att, status: 'unreadable', read: [], list: [], who: '', tried: [] }; }
+    }
     if (!att.reading.length) return { att, status: 'none' };
     const { readParts } = await import('./wf-screenshot-reader.mjs');
     const lead = `[This is attachment ${att.n} of ${total} on one report, ${att.kind === 'pdf' ? `a PDF document (${att.pages === 1 ? 'page 1' : 'its first ' + att.pages + ' pages'} of ${att.totalPages}); each picture is one page` : 'a screenshot'}. The other attachments are separate files.] `;
@@ -111,13 +133,13 @@ const fenceSafe = (t) => String(t).replace(/```/g, "'''");
  * Read every attachment and write the issue section.
  * @returns {Promise<{ status:'none'|'read'|'partial'|'unreadable', section:string, count:number, read:number, provider?:string }>}
  */
-export async function readAllAttachments({ attachments, title = '', text = '', env = process.env, fetchImpl = globalThis.fetch, describeImpl, deadlineMs = 32_000, log = () => {} } = {}) {
+export async function readAllAttachments({ attachments, title = '', text = '', env = process.env, fetchImpl = globalThis.fetch, describeImpl, chatImpl, deadlineMs = 32_000, log = () => {} } = {}) {
     const list = Array.isArray(attachments) ? attachments : [];
     if (!list.length) return { status: 'none', section: '', count: 0, read: 0 };
     const total = list.length;
-    const results = await Promise.all(list.map((att) => readOne(att, total, { title, text, env, fetchImpl, describeImpl, deadlineMs, log })));
+    const results = await Promise.all(list.map((att) => readOne(att, total, { title, text, env, fetchImpl, describeImpl, chatImpl, deadlineMs, log })));
 
-    const pictures = results.filter((r) => r.att.reading.length);
+    const pictures = results.filter((r) => r.att.reading.length || (r.att.kind === 'video' && r.att.frames.length));
     const textFiles = results.filter((r) => r.att.kind === 'text' && r.att.text.trim());
     const readOk = pictures.filter((r) => r.status === 'read');
     if (!readOk.length && !textFiles.length) return { status: pictures.length ? 'unreadable' : 'none', section: '', count: total, read: 0 };
@@ -133,6 +155,12 @@ export async function readAllAttachments({ attachments, title = '', text = '', e
             blocks.push([head, `_The start of the file${a.truncated ? ' (it is longer)' : ''}, with amounts, long numbers, e-mail addresses and quoted record text masked:_`, '', '```', fenceSafe(body), '```'].join('\n'));
             continue;
         }
+        if (a.kind === 'video') {
+            if (r.status !== 'read') { blocks.push(`${head}\n_The recording's frames could not be read by a vision model${r.video && r.video.timedOut ? ' in time' : ''}. Work from the written report._`); continue; }
+            // a recording of the app is described as it is, like a screenshot; the long text is bounded so it cannot crowd out the other attachments
+            blocks.push(videoBlock({ head: `**Attachment ${a.n} of ${total} — ${KIND_WORD.video}${a.duration ? ` (${a.duration.toFixed(1)} s, ${a.frames.length} frames looked at)` : ''}**`, result: r.video, duration: a.duration }).slice(0, 9500));
+            continue;
+        }
         if (r.status !== 'read') { blocks.push(`${head}\n_Could not be read by a vision model${r.status === 'timeout' ? ' in time' : ''}. Work from the written report._`); continue; }
         const parts = r.read.map(({ p, i }) => (r.list.length > 1 ? `_${a.kind === 'pdf' ? 'Page' : 'Part'} ${i + 1}:_ ` : '') + p.text).join('\n\n');
         // a document may carry money and identity; a screenshot of the app is described as it is
@@ -144,9 +172,10 @@ export async function readAllAttachments({ attachments, title = '', text = '', e
         '### What the AI saw in the screenshot', '',
         `<!-- ${READING_MARKER} -->`,
         `<!-- ${COUNT_MARKER}:${total} -->`,
-        `_${total} attachment${total === 1 ? '' : 's'} read from the full-quality files when the report was filed${who ? `, by a vision model (${who})` : ''}. It is a machine reading and can be wrong: use it to decide where to look, and trust the code over it. Names of files are not recorded._`,
+        ...(results.some((r) => r.att.kind === 'video' && r.status === 'read') ? [`<!-- ${VIDEO_MARKER} -->`] : []),
+        `_${total} attachment${total === 1 ? '' : 's'} read from the full-quality files (a recording: from frames the phone picked) when the report was filed${who ? `, by a vision model (${who})` : ''}. It is a machine reading and can be wrong: use it to decide where to look, and trust the code over it. Names of files are not recorded._`,
         '', blocks.join('\n\n'), '',
-    ].join('\n').slice(0, 14_000);
+    ].join('\n').slice(0, 20_000);
     const status = readOk.length === pictures.length ? 'read' : (readOk.length || textFiles.length ? 'partial' : 'unreadable');
     return { status, section, count: total, read: readOk.length + textFiles.length, provider: readOk[0] && readOk[0].provider };
 }
