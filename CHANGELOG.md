@@ -1,5 +1,17 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.104 — 2026-11-21
+
+**What changed for you**
+
+- Layout overlap on phones: CC Instalments (#662)
+
+**Under the hood**
+
+- Recovery job explains a switched-off approval and waits for the checks it released (#665)
+- Recovery job carries layout-lane PRs to the end by itself (approve, rebuild head, merge) (#664)
+- Fix agent can edit an existing screen: guarded find-and-replace, phone run and two-model verdict before any PR (#663)
+
 ## v7.69.103 — 2026-11-21
 
 **What changed for you**
