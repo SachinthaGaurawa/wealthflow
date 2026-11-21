@@ -1,5 +1,15 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.105 — 2026-11-21
+
+**What changed for you**
+
+- Layout overlap on phones: CC one-time charges (#660)
+
+**Under the hood**
+
+- Recovery job asks again when GitHub has not yet worked out mergeability (#666)
+
 ## v7.69.104 — 2026-11-21
 
 **What changed for you**
