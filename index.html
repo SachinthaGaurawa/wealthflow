@@ -23225,7 +23225,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const finished = item.completed || end <= new Date();   // a plan whose last month has passed is done: nothing is owed, nobody has to mark it
                 const skipCount = item.skipped?.length || 0;
                 return (item === _cap.firstDone ? _cap.a.row + _wfDoneRow(_cap.doneCount, 'instalments', 11) : '') + `<tr class="${finished ? 'done-row' : ''}">
-            <td><div style="font-weight:600;">${_wfEsc(item.product)}</div>${item.notes ? `<div class="td-m">${_wfEsc(item.notes)}</div>` : ''}</td>
+            <td><div style="font-weight:600;">${_wfEsc(item.product)}</div>${item.notes ? `<div class="td-m wf-cci-note">${_wfEsc(item.notes)}</div>` : ''}<div class="wf-cci-sum">${fmt(item.monthly)} a month · ${prog.paid} of ${prog.total} paid · ${finished ? 'Done' : 'Active'}</div><button type="button" class="wf-cci-open" aria-label="Open the details of ${_wfEsc(item.product)}" onclick="window.WFCCInstalmentDetail &amp;&amp; window.WFCCInstalmentDetail.open('${_wfJsAttr(item.id)}')">Details &rsaquo;</button></td>
             <td>${_wfEsc(item.buyer || 'Self')}</td>
             <td><span class="badge bg-b">${_wfEsc(_bankShown(item.bank))}</span></td>
             <td class="td-a">${fmt(item.total)}${item.totalEstimated ? '<div class="td-m" style="font-size:10px;">estimate</div>' : item.durationUnknown ? '<div class="td-m" style="font-size:10px;">months seen so far</div>' : ''}${item.outstanding != null && !finished ? `<div class="td-m" style="font-size:10px;">bank says ${fmt(item.outstanding)} still owed</div>` : ''}</td>

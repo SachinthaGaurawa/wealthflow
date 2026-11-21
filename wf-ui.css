@@ -1258,12 +1258,16 @@ input.fi, input[type="search"], input[type="text"] { text-overflow: ellipsis; }
 .wf-ctab-meta { grid-column: 2; font: 500 11.5px/1.3 var(--wf-font); color: var(--wf-text-2); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wf-ctab-due { grid-column: 2; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .wf-ctab-duelbl { font: 500 11px/1.3 var(--wf-font); color: var(--wf-text-3); }
-.wf-ctab-amt { font: 700 13px/1.3 var(--wf-font); color: var(--wf-text); }
+.wf-ctab-amt { font: 700 13px/1.3 var(--wf-font); color: var(--wf-text); white-space: nowrap; }
 .wf-ctab-due.is-none .wf-ctab-amt { font-weight: 500; color: var(--wf-text-3); }
 .wf-ctab.is-late .wf-ctab-amt { color: var(--wf-neg); }
 .wf-ctab-late { font: 600 10.5px/1.3 var(--wf-font); padding: 1px 6px; border-radius: var(--wf-r-pill); color: var(--wf-neg); background: var(--wf-neg-soft); white-space: nowrap; }
 @media (max-width: 640px) {
-    .wf-ctabs { grid-auto-columns: minmax(236px, 84%); }
+    /* A phone shows every card at once, two to a row ("All cards" across the top). A sideways strip cut the second card in half at the screen edge and nothing said there was more to the right. */
+    .wf-ctabs { grid-auto-flow: row; grid-auto-columns: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow-x: visible; }
+    .wf-ctabs > .wf-ctab:first-child:nth-last-child(n + 3) { grid-column: 1 / -1; }
+    .wf-ctab { padding-right: var(--wf-s3); }
+    .wf-ctab-meta { white-space: normal; }
 }
 @media (prefers-reduced-motion: reduce) {
     .wf-ctab { transition: none; }
@@ -1343,3 +1347,22 @@ button:focus-visible, .btn:focus-visible, .gf-btn:focus-visible, [role="switch"]
 .wf-due-card.is-covered .wf-due-chip, .wf-due-card.is-paid .wf-due-chip { color: var(--wf-pos); background: var(--wf-pos-soft); }
 @media (max-width: 640px) { .wf-due-list { grid-template-columns: 1fr; } }
 @media (forced-colors: active) { .wf-due-card { border-color: CanvasText; } .wf-due-card.is-late, .wf-due-card.is-soon { border-color: Highlight; } }
+
+
+/* ==========================================================================
+   32. CC INSTALMENTS ROWS ON A PHONE
+   The table slides sideways with its Actions column pinned, so on a phone a row showed only the product's name and the three action icons; the amounts were off to the right and nothing said a row could be opened.
+   Each row now says what matters under its name (the monthly figure, months paid, status) and carries a Details button that opens the whole plan (wealthflow-cc-instalment-detail.js).
+   ========================================================================== */
+.wf-cci-sum { margin-top: 3px; font: 500 12px/1.4 var(--wf-font); color: var(--wf-text-2); font-variant-numeric: tabular-nums; }
+.wf-cci-open {
+    margin-top: 6px; min-height: 36px; padding: 6px 14px; border: 1px solid var(--wf-accent-line); border-radius: var(--wf-r-pill);
+    background: var(--wf-accent-soft); color: var(--wf-text); font: 600 12px/1 var(--wf-font); cursor: pointer;
+}
+.wf-cci-open:active { transform: translateY(1px); }
+.wf-cci-open:focus-visible { outline: 2px solid var(--wf-accent); outline-offset: 2px; }
+#page-ccinstall .wf-cci-note { white-space: normal; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow-wrap: anywhere; }
+@media (min-width: 641px) { .wf-cci-sum { display: none; } }
+/* A cell's own max-width does nothing inside a table, so the room is set on what is in it: the pinned Actions column is about 150px, and the name, note and summary must wrap before it instead of running under it. */
+.wf-cci-sum { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 640px) { #page-ccinstall tbody td:first-child > * { max-width: max(150px, calc(100vw - 236px)); } }
