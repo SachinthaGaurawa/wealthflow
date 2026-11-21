@@ -53,6 +53,7 @@ import { runSwarm, swarmMayEdit } from './autonomy/agent-swarm.mjs';
 import { symptomHome, homeFacts, reachabilityGap } from './autonomy/symptom-home.mjs';
 import { layoutLaneFor, runLayoutLane } from './autonomy/css-lane.mjs';
 import { buildLaneFor, runBuildLane, wireModule } from './autonomy/build-lane.mjs';
+import { editLaneFor, runEditLane } from './autonomy/edit-lane.mjs';
 import { runAcceptance } from './autonomy/acceptance.mjs';
 import { pendingRevision } from './autonomy/acceptance-flow.mjs';
 import { conceptBoardFor, runConceptBoard, renderComment as boardComment, briefFor, parseStoredBoard, BOARD_MARKER } from './autonomy/concept-board.mjs';
@@ -229,7 +230,9 @@ export function prBody({ issue = {}, number, result = {}, testWritten = null, le
         `**Authored by:** ${result.role} agent via \`${provs.author}\``,
         `**Independently reviewed by:** Agent 5 (Chaos Security) via \`${provs.security || 'unavailable'}\``,
         `**Security verdict:** ${result.review?.verdict || 'n/a'}${result.review?.reason ? ` — ${result.review.reason}` : ''}`,
-        result.lane === 'build'
+        result.lane === 'edit'
+            ? `**Screen edited in place:** ${result.change || ''}. Find-and-replace edits only; a program refused anything outside the template text of one render function and the screen's own CSS rules, so no money calculation, book write or script could change.`
+            : result.lane === 'build'
             ? `**New module:** \`${result.file}\` — ${result.change || ''}. It can read the books and show things; it cannot write them (a machine refuses \`DB.set\`, Firebase calls, eval, script injection and secrets).`
             : result.lane === 'layout'
             ? `**Proof:** measured in real Chromium on invented books at ${(result.layout?.widths || []).join(', ')}px wide, before and after: **${String(result.layout?.verdict || '').toUpperCase()}** (${result.layout?.reason || ''}). This is a measurement, not a person looking at a phone.`
@@ -258,7 +261,9 @@ export function prBody({ issue = {}, number, result = {}, testWritten = null, le
             : result.verified
             ? '- **The proving test was executed twice** — red against the original file, green against this one'
             : '- [WARNING] The proving test was NOT executed red→green',
-        result.lane === 'build'
+        result.lane === 'edit'
+            ? '- Guarded path touched: `index.html` (the template text of one render function, checked by a program: code outside the templates is byte-identical), and `wf-ui.css` (rules of this screen only). `human-approved` is required. **The edited page was run on a phone in real Chromium and judged by two models before this pull request existed** (see "Acceptance run").'
+            : result.lane === 'build'
             ? '- Guarded paths touched: `index.html` (one added script line) and `autonomy/perf-budget.mjs` (ceilings raised to the measured value), so `human-approved` is required. No auth, crypto, money, rules, service-worker, dependency or CI file.'
             : '- Sensitive-path gate: this change touches no auth, crypto, money, rules, service-worker, dependency, or CI file',
         '',
@@ -530,21 +535,34 @@ async function main() {
                 analyse: (ctx) => runAnalysis({ ...ctx, log }),
             });
             // Code first, the new-module lane when the one-file lane cannot place the change (or must not even be tried).
+            // THE EDIT LANE (autonomy/edit-lane.mjs; owner, 2026-11-21): the screen exists, is drawn by a render function in index.html, and no other lane may edit
+            // it. The words, markup and look of THAT function (and the screen's own rules in wf-ui.css) are changed by find-and-replace edits; code and money are
+            // out of reach; nothing becomes a pull request until the edited page has been run on a phone and judged by two models. WF_EDIT_LANE=0 turns it off.
+            const editIt = () => runEditLane({ issue: { number, title: issue.title, body: laneBody }, home, repoDir: REPO_DIR, log, accept });
             const codeOrBuild = async () => {
+                let editNote = '';
+                const ed = editLaneFor({ home, kind });
+                if (ed.applies && !home.mayEdit) {
+                    log(`#${number} ${ed.why} — editing the screen itself, with a phone run as proof`);
+                    const edited = await editIt();
+                    if (edited.ok) { laneName = 'edit'; return edited; }
+                    editNote = ` | edit lane (${edited.stage}): ${edited.reason}`;
+                    log(`#${number} the edit lane did not produce a change (${edited.stage}): ${String(edited.reason).slice(0, 240)}`);
+                }
                 if (lockedScreen) {
                     log(`#${number} the screen is drawn by ${home.fn}() in ${home.file}, which no lane may edit, and the report is about something that cannot be seen or opened — building it as a new read-only module`);
                     const built = await buildIt();
                     if (built.ok) { laneName = 'build'; return built; }
-                    return { ...built, reason: `${built.reason} | the screen is drawn by ${home.fn}() in ${home.file}, which no lane may edit, so the one-file lane was not tried on unrelated modules` };
+                    return { ...built, reason: `${built.reason} | the screen is drawn by ${home.fn}() in ${home.file}, which no lane may edit, so the one-file lane was not tried on unrelated modules${editNote}` };
                 }
                 const r = await asCode();
                 if (!r.ok && (kind === 'feature' || reachabilityGap(reportText)) && ['select', 'author', 'structure', 'security'].includes(r.stage)) {
                     log(`#${number} the one-file lane could not place it (${r.stage}) — trying the build lane`);
                     const built = await buildIt();
                     if (built.ok) { laneName = 'build'; return built; }
-                    return { ...r, reason: `${r.reason} | build lane: ${built.reason}` };
+                    return { ...r, reason: `${r.reason} | build lane: ${built.reason}${editNote}` };
                 }
-                return r;
+                return editNote && !r.ok ? { ...r, reason: `${r.reason}${editNote}` } : r;
             };
             if (reviseNote) {
                 laneName = 'build';
@@ -645,6 +663,19 @@ async function main() {
             }
             extraFiles = w.files;
             wiringNote = `Put on the page by a mechanical edit: ${w.files.join(', ')}${w.raised.length ? ` (payload ceilings raised: ${w.raised.join('; ')})` : ''}.`;
+            log(wiringNote);
+        }
+
+        // The edit lane changes the screen's own files by find-and-replace. Its other files (the style sheet, the byte ceiling) are written here, from an
+        // ALLOWLIST of three paths, and named in the pull request; the workflow stages the same three and nothing else.
+        if (result.lane === 'edit') {
+            const OK = new Set(['index.html', 'wf-ui.css', 'autonomy/perf-budget.mjs']);
+            for (const [f, text] of Object.entries(result.files || {})) {
+                if (!OK.has(f) || f === result.file) { log(`#${number} the edit lane named ${f}, which it may not write: ignored`); continue; }
+                fs.writeFileSync(path.join(REPO_DIR, f), String(text).endsWith('\n') ? String(text) : String(text) + '\n');
+                extraFiles.push(f);
+            }
+            wiringNote = `The screen was edited in place (${result.change}). Files: ${[result.file, ...extraFiles].join(', ')}${result.edit && result.edit.budgetRaised ? ` (index.html byte ceiling raised ${result.edit.budgetRaised})` : ''}. Every edit is a find-and-replace that a program checked: only the template text of ${result.edit ? result.edit.fn : 'one render function'}() and the screen's own CSS rules may change.`;
             log(wiringNote);
         }
 

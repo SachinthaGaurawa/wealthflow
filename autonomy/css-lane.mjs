@@ -142,9 +142,9 @@ export function layoutLaneFor(issue) {
 }
 
 // ── a small, strict CSS reader (no dependency; refuses what it does not understand) ──────────────
-function stripComments(css) { return String(css || '').replace(/\/\*[\s\S]*?\*\//g, ''); }
+export function stripComments(css) { return String(css || '').replace(/\/\*[\s\S]*?\*\//g, ''); }
 
-function splitTop(s, sep) {
+export function splitTop(s, sep) {
     const out = []; let depth = 0, cur = '';
     for (const ch of s) {
         if (ch === '(' || ch === '[') depth++;
@@ -155,7 +155,7 @@ function splitTop(s, sep) {
     return out.map((x) => x.trim()).filter(Boolean);
 }
 
-function readBlocks(css, problems, nested = false) {
+export function readBlocks(css, problems, nested = false) {
     const rules = [];
     let i = 0;
     while (i < css.length) {
