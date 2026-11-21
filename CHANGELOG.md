@@ -1,5 +1,15 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.103 — 2026-11-21
+
+**What changed for you**
+
+- Send Feedback takes a screen recording, read frame by frame by several models (#657)
+
+**Under the hood**
+
+- Strip e-mail addresses and long numbers from every reading (#661)
+
 ## v7.69.102 — 2026-11-21
 
 **What changed for you**
