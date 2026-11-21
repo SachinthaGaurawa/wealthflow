@@ -456,9 +456,18 @@ export async function run({ env = process.env, fetchImpl = globalThis.fetch, log
         if (env.WF_AUTO_LANE !== '0') {
             const files = await filesOf();
             if (files.length && files.every((f) => f.filename === LANE_FILE)) {
-                const full = (await call(`/pulls/${pr.number}`).catch(() => null)) || {};
+                let full = (await call(`/pulls/${pr.number}`).catch(() => null)) || {};
+                // GitHub works out "does it merge cleanly" lazily, and again whenever the default branch moves. A null answer is "ask again in a moment", not "no" (2026-11-21: the run right after #665 merged read null and gave up for an hour).
+                for (let i = 0; i < 5 && full.mergeable == null && full.head && full.head.sha === pr.head.sha; i++) {
+                    await sleep(4000);
+                    full = (await call(`/pulls/${pr.number}`).catch(() => null)) || full;
+                }
                 const mv = full.head && full.head.sha === pr.head.sha ? mergeVerdict({ pr: { ...pr, draft: full.draft }, files, checkRuns, mergeable: full.mergeable }) : { ok: false, why: 'the branch moved while it was being checked' };
-                if (!mv.ok) log(`#${pr.number}: layout PR not merged yet — ${mv.why}`);
+                if (!mv.ok) {
+                    log(`#${pr.number}: layout PR not merged yet — ${mv.why}`);
+                    // Still undecided after the short wait: the outer loop looks again instead of leaving it to the hourly timer.
+                    if (full.mergeable == null) done.push({ pr: pr.number, issue, action: 'wait', reason: 'checks are still running: GitHub has not yet worked out whether it merges cleanly', failed: [] });
+                }
                 else if (dryRun) log(`#${pr.number}: would merge — ${mv.why}`);
                 else {
                     try {
