@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.102 — 2026-11-21
+
+**What changed for you**
+
+- CC Instalments on a phone: readable rows with a Details button, cards fit the screen, sheet agrees with the table (#655)
+
 ## v7.69.101 — 2026-11-20
 
 **What changed for you**
